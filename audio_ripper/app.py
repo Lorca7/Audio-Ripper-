@@ -111,6 +111,8 @@ class AudioRipperApp:
         self.url_entry = ttk.Entry(url_row, textvariable=self.url_var)
         self.url_entry.pack(side="left", fill="x", expand=True, padx=(6, 6))
         self.url_entry.bind("<Return>", lambda e: self.load_url())
+        self.paste_btn = ttk.Button(url_row, text="Paste & Load", command=self.paste_and_load)
+        self.paste_btn.pack(side="left", padx=(0, 6))
         self.load_btn = ttk.Button(url_row, text="Load", command=self.load_url)
         self.load_btn.pack(side="left")
         self.file_btn = ttk.Button(url_row, text="Open File…", command=self.open_file)
@@ -209,7 +211,7 @@ class AudioRipperApp:
         # --- Status bar
         status = ttk.Frame(outer)
         status.pack(fill="x", pady=(4, 0))
-        self.status_var = tk.StringVar(value="Paste a YouTube link and press Load.")
+        self.status_var = tk.StringVar(value="Copy a YouTube link, then click Paste & Load.")
         ttk.Label(status, textvariable=self.status_var).pack(side="left", fill="x", expand=True)
         self.progress = ttk.Progressbar(status, length=220, mode="determinate", maximum=1.0)
         self.progress.pack(side="right")
@@ -246,6 +248,19 @@ class AudioRipperApp:
             filem.add_separator()
             filem.add_command(label="Quit", command=self.on_close)
         menubar.add_cascade(label="File", menu=filem)
+
+        editm = tk.Menu(menubar, tearoff=0)
+        editm.add_command(label="Cut", accelerator=f"{MOD_LABEL}+X",
+                          command=lambda: self._edit_action("cut"))
+        editm.add_command(label="Copy", accelerator=f"{MOD_LABEL}+C",
+                          command=lambda: self._edit_action("copy"))
+        editm.add_command(label="Paste", accelerator=f"{MOD_LABEL}+V",
+                          command=lambda: self._edit_action("paste"))
+        editm.add_command(label="Select All", accelerator=f"{MOD_LABEL}+A",
+                          command=lambda: self._edit_action("selectall"))
+        editm.add_separator()
+        editm.add_command(label="Paste Link & Load", command=self.paste_and_load)
+        menubar.add_cascade(label="Edit", menu=editm)
 
         viewm = tk.Menu(menubar, tearoff=0)
         viewm.add_command(label="Zoom In", accelerator="+", command=lambda: self.zoom(0.5))
@@ -288,7 +303,33 @@ class AudioRipperApp:
         for seq, fn in keys.items():
             r.bind(seq, lambda e, fn=fn: self._key(e, fn))
 
+        # Clipboard shortcuts + right-click menu for every text field. Done
+        # explicitly because Tk's defaults are unreliable on some macOS
+        # setups (e.g. non-US keyboard layouts) and Tk has no context menu.
+        self._ctx_menu = tk.Menu(self.root, tearoff=0)
+        self._ctx_menu.add_command(label="Cut", command=lambda: self._edit_action("cut"))
+        self._ctx_menu.add_command(label="Copy", command=lambda: self._edit_action("copy"))
+        self._ctx_menu.add_command(label="Paste", command=lambda: self._edit_action("paste"))
+        self._ctx_menu.add_separator()
+        self._ctx_menu.add_command(label="Select All",
+                                   command=lambda: self._edit_action("selectall"))
+        for ent in (self.url_entry, self.start_entry, self.end_entry):
+            for key, action in (("v", "paste"), ("c", "copy"), ("x", "cut"), ("a", "selectall")):
+                for k in (key, key.upper()):
+                    ent.bind(f"<{MOD}-{k}>",
+                             lambda e, a=action, w=ent: self._edit_action(a, w) or "break")
+            right_clicks = ["<Button-3>"]
+            if IS_MAC:
+                right_clicks += ["<Button-2>", "<Control-Button-1>"]
+            for seq in right_clicks:
+                ent.bind(seq, self._show_context_menu)
+
+    # Modifier bits that mean "this is a shortcut, not a plain key".
+    _SHORTCUT_MASK = (0x4 | 0x8 | 0x10) if IS_MAC else (0x4 | 0x8)
+
     def _key(self, event, fn):
+        if event.state & self._SHORTCUT_MASK:
+            return None  # Cmd/Ctrl/Option combos are handled elsewhere
         # Don't steal keys while typing in a text field.
         if isinstance(event.widget, (tk.Entry, ttk.Entry, ttk.Combobox)):
             if event.keysym == "Escape":
@@ -296,6 +337,82 @@ class AudioRipperApp:
             return None
         fn()
         return "break"
+
+    # ---------------------------------------------------------- clipboard
+    def _clipboard_text(self) -> str:
+        try:
+            return self.root.clipboard_get()
+        except tk.TclError:
+            pass
+        if IS_MAC:  # fall back to the system pasteboard
+            try:
+                import subprocess
+                return subprocess.run(["/usr/bin/pbpaste"], capture_output=True,
+                                      text=True, timeout=2).stdout
+            except Exception:  # noqa: BLE001
+                pass
+        return ""
+
+    def _edit_action(self, action: str, widget=None):
+        """Cut / copy / paste / select-all on a text field.
+
+        Paste is debounced so a menu shortcut and a key binding firing for
+        the same key press only paste once.
+        """
+        w = widget or self.root.focus_get()
+        if not isinstance(w, (tk.Entry, ttk.Entry)):
+            if action == "paste":  # nothing focused: paste into the URL box
+                w = self.url_entry
+            else:
+                return None
+        has_sel = bool(w.selection_present())
+        if action == "selectall":
+            w.selection_range(0, "end")
+            w.icursor("end")
+        elif action in ("copy", "cut") and has_sel:
+            text = w.selection_get()
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            if action == "cut":
+                w.delete("sel.first", "sel.last")
+        elif action == "paste":
+            now = time.monotonic()
+            if now - getattr(self, "_last_paste", 0.0) < 0.25:
+                return None
+            self._last_paste = now
+            text = self._clipboard_text()
+            if w is self.url_entry:
+                text = text.strip()
+            text = text.replace("\r", " ").replace("\n", " ")
+            if not text:
+                self.root.bell()
+                return None
+            if has_sel:
+                w.delete("sel.first", "sel.last")
+            w.insert("insert", text)
+            w.focus_set()
+        return None
+
+    def _show_context_menu(self, event):
+        event.widget.focus_set()
+        try:
+            self._ctx_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._ctx_menu.grab_release()
+        return "break"
+
+    def paste_and_load(self):
+        if self.busy:
+            return
+        text = self._clipboard_text().strip()
+        if not text:
+            messagebox.showinfo(APP_NAME, "The clipboard is empty.\n\nCopy a YouTube link "
+                                          "first (in your browser: select the address bar, "
+                                          "then press Cmd+C).")
+            return
+        self.url_var.set(text.split()[0])
+        self.url_entry.icursor("end")
+        self.load_url()
 
     # -------------------------------------------------------------- helpers
     def set_status(self, msg: str, frac: Optional[float] = None):
@@ -319,6 +436,7 @@ class AudioRipperApp:
         sel = have and self.sel_start is not None
         st = lambda ok: ("!disabled" if ok else "disabled")  # noqa: E731
         self.load_btn.state([st(not self.busy)])
+        self.paste_btn.state([st(not self.busy)])
         self.file_btn.state([st(not self.busy)])
         self.cancel_btn.state([st(self.busy)])
         for b in self.zoom_btns + [self.selall_btn, self.play_btn, self.stop_btn,
@@ -547,8 +665,9 @@ class AudioRipperApp:
     def _draw_main(self):
         c = self.wv
         if self.audio is None:
-            self._draw_placeholder(c, "Paste a YouTube URL above and press Load\n"
-                                      "(or use Open File… for a local audio/video file)")
+            self._draw_placeholder(c, "Copy a YouTube link in your browser, then click  Paste & Load\n"
+                                      "(or paste it into the URL box with ⌘V / right-click → Paste,\n"
+                                      "or use Open File… for a local audio/video file)")
             self.view_info_var.set("")
             return
         c.delete("all")
@@ -984,7 +1103,9 @@ class AudioRipperApp:
     # --------------------------------------------------------------- misc
     def show_help(self):
         messagebox.showinfo(APP_NAME, (
-            "1. Paste a YouTube link and press Load (or open a local file).\n\n"
+            "1. Copy a YouTube link in your browser and click Paste & Load. You can also "
+            "paste into the URL box (⌘V, right-click → Paste, or Edit → Paste) and press "
+            "Load, or open a local file.\n\n"
             "2. The top strip shows the whole video. The yellow window marks the part "
             "shown in the big zoomed view. Drag the window to move it; drag its edges to "
             "expand it to the whole video or narrow it down to a tiny section.\n\n"
@@ -1043,6 +1164,13 @@ def main():
     except tk.TclError:
         pass
     app = AudioRipperApp(root)
+
+    def _activate():
+        # Make sure the window gets keyboard focus when launched from Finder.
+        root.lift()
+        root.focus_force()
+        app.url_entry.focus_set()
+    root.after(150, _activate)
     args = [a for a in sys.argv[1:] if not a.startswith("-psn")]
     if args:
         target = args[0]

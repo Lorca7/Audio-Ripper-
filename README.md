@@ -10,8 +10,10 @@ else needs to be installed. It runs on macOS 11 and later, including
 
 ## Using it
 
-1. Paste a YouTube link into **YouTube URL** and press **Load** (or press Return).
-   You can also use **Open File…** to load a local audio or video file.
+1. Copy a YouTube link in your browser (click the address bar, then ⌘C) and
+   click **Paste & Load**. You can also paste into the **YouTube URL** box
+   with ⌘V, right-click → Paste, or Edit → Paste, then press **Load** (or
+   Return). **Open File…** loads a local audio or video file instead.
 2. The **whole-video strip** at the top shows the entire soundtrack. The
    **yellow window** on it marks the part shown in the large zoomed view:
    * drag the window to move it,
