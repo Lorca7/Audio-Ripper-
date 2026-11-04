@@ -24,7 +24,7 @@ a = Analysis(
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["yt_dlp", "imageio_ffmpeg", "imageio_ffmpeg.binaries"],
+    hiddenimports=["yt_dlp", "imageio_ffmpeg", "imageio_ffmpeg.binaries", "tkinterdnd2"],
     excludes=["matplotlib", "scipy", "pandas", "PyQt5", "PySide6", "IPython"],
     noarchive=False,
 )
@@ -54,5 +54,26 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,
         "LSApplicationCategoryType": "public.app-category.music",
+        # Lets you drop video/audio files on the Dock icon and use
+        # Finder's "Open With → Audio Ripper".
+        "CFBundleDocumentTypes": [
+            {
+                "CFBundleTypeName": "Video or audio file",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": [
+                    "public.movie",
+                    "public.audio",
+                    "public.audiovisual-content",
+                ],
+            },
+            {
+                "CFBundleTypeName": "Other media file",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "CFBundleTypeExtensions": ["webm", "mkv", "opus", "ogg", "oga",
+                                           "flac", "m4a", "mp4", "mov", "avi"],
+            },
+        ],
     },
 )

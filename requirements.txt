@@ -1,3 +1,4 @@
 yt-dlp[default]>=2025.11.12
 numpy>=1.26
 imageio-ffmpeg>=0.5.1
+tkinterdnd2>=0.4.2

@@ -86,6 +86,9 @@ class AudioRipperApp:
 
         self._build_ui()
         self._bind_keys()
+        self.dnd_enabled = self._setup_drag_and_drop()
+        self._drop_hover = False
+        self._drop_leave_job = None
         self.root.after(100, self._poll_queue)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._update_controls()
@@ -401,6 +404,92 @@ class AudioRipperApp:
             self._ctx_menu.grab_release()
         return "break"
 
+    # ------------------------------------------------------- drag & drop
+    def _setup_drag_and_drop(self) -> bool:
+        """Accept files (and links) dropped anywhere on the window."""
+        try:
+            from tkinterdnd2 import DND_FILES, DND_TEXT, TkinterDnD
+            TkinterDnD._require(self.root)
+        except Exception:  # noqa: BLE001 - drag & drop is optional
+            return False
+
+        def register(w):
+            try:
+                w.drop_target_register(DND_FILES, DND_TEXT)
+                w.dnd_bind("<<DropEnter>>", self._drop_enter)
+                w.dnd_bind("<<DropPosition>>", self._drop_position)
+                w.dnd_bind("<<DropLeave>>", self._drop_leave)
+                w.dnd_bind("<<Drop>>", self._on_drop)
+            except Exception:  # noqa: BLE001
+                pass
+            for child in w.winfo_children():
+                if not isinstance(child, tk.Menu):
+                    register(child)
+
+        register(self.root)
+        return True
+
+    def _set_drop_hover(self, on: bool):
+        if self._drop_leave_job is not None:
+            self.root.after_cancel(self._drop_leave_job)
+            self._drop_leave_job = None
+        if on != self._drop_hover:
+            self._drop_hover = on
+            self.request_redraw()
+
+    def _drop_enter(self, event):
+        self._set_drop_hover(True)
+        return getattr(event, "action", None) or "copy"
+
+    def _drop_position(self, event):
+        self._set_drop_hover(True)
+        return getattr(event, "action", None) or "copy"
+
+    def _drop_leave(self, event):
+        # Moving between widgets fires leave+enter; wait before hiding the hint.
+        if self._drop_leave_job is None:
+            self._drop_leave_job = self.root.after(
+                120, lambda: (setattr(self, "_drop_leave_job", None),
+                              self._set_drop_hover(False)))
+        return getattr(event, "action", None) or "copy"
+
+    def _on_drop(self, event):
+        self._set_drop_hover(False)
+        try:
+            items = list(self.root.tk.splitlist(event.data))
+        except tk.TclError:
+            items = [str(event.data)]
+        self.handle_dropped(items)
+        return getattr(event, "action", None) or "copy"
+
+    def handle_dropped(self, items) -> bool:
+        """Load the first dropped file, or a dropped web link."""
+        from urllib.parse import unquote, urlparse
+        for raw in items:
+            item = str(raw).strip()
+            if not item:
+                continue
+            if item.lower().startswith("file://"):
+                item = unquote(urlparse(item).path)
+            if os.path.isfile(item):
+                if self.busy:
+                    self.root.bell()
+                    self.set_status("Busy — wait for the current job to finish, then drop again.")
+                    return False
+                self.url_var.set("")
+                self._start_job(self._job_file, item)
+                return True
+            if item.lower().startswith(("http://", "https://", "www.", "youtu")):
+                if self.busy:
+                    self.root.bell()
+                    return False
+                self.url_var.set(item.split()[0])
+                self.load_url()
+                return True
+        self.root.bell()
+        self.set_status("That drop didn't contain a file or link I can use.")
+        return False
+
     def paste_and_load(self):
         if self.busy:
             return
@@ -594,7 +683,8 @@ class AudioRipperApp:
     def _draw_placeholder(self, c: tk.Canvas, text: str):
         c.delete("all")
         w, h = c.winfo_width(), c.winfo_height()
-        c.create_text(w / 2, h / 2, text=text, fill=TEXT, font=("TkDefaultFont", 13))
+        c.create_text(w / 2, h / 2, text=text, fill=TEXT, font=("TkDefaultFont", 13),
+                      justify="center")
 
     def _wave_polygons(self, c: tk.Canvas, lo, hi, top: float, h: float,
                        x_sel0: Optional[float], x_sel1: Optional[float]):
@@ -662,13 +752,25 @@ class AudioRipperApp:
                       font=("TkDefaultFont", 9))
         self.ov_playhead = c.create_line(-10, 0, -10, h, fill=PLAYHEAD, width=2)
 
+    def _draw_drop_overlay(self, c: tk.Canvas):
+        if not self._drop_hover:
+            return
+        w, h = c.winfo_width(), c.winfo_height()
+        c.create_rectangle(6, 6, w - 6, h - 6, outline=WAVE_SEL, width=3, dash=(10, 6),
+                           fill=BG)
+        c.create_text(w / 2, h / 2, fill=WAVE_SEL, font=("TkDefaultFont", 18, "bold"),
+                      text="Drop to rip the audio from this file")
+
     def _draw_main(self):
         c = self.wv
         if self.audio is None:
+            drop = ("\n\nor drag a video / audio file from your computer and drop it here"
+                    if self.dnd_enabled else "")
             self._draw_placeholder(c, "Copy a YouTube link in your browser, then click  Paste & Load\n"
                                       "(or paste it into the URL box with ⌘V / right-click → Paste,\n"
-                                      "or use Open File… for a local audio/video file)")
+                                      "or use Open File… for a local audio/video file)" + drop)
             self.view_info_var.set("")
+            self._draw_drop_overlay(c)
             return
         c.delete("all")
         w, h = c.winfo_width(), c.winfo_height()
@@ -736,6 +838,7 @@ class AudioRipperApp:
         self.view_info_var.set(f"Showing {core.format_time(vs)} – {core.format_time(ve)}"
                                f"  ({core.format_time(span)} of "
                                f"{core.format_time(self.audio.duration, 0)})")
+        self._draw_drop_overlay(c)
 
     # --------------------------------------------------- main view mouse
     def _hit(self, x: float) -> str:
@@ -1105,7 +1208,8 @@ class AudioRipperApp:
         messagebox.showinfo(APP_NAME, (
             "1. Copy a YouTube link in your browser and click Paste & Load. You can also "
             "paste into the URL box (⌘V, right-click → Paste, or Edit → Paste) and press "
-            "Load, or open a local file.\n\n"
+            "Load. To use a video or audio file from your computer, drag it onto this "
+            "window (or onto the app's Dock icon), or use Open File….\n\n"
             "2. The top strip shows the whole video. The yellow window marks the part "
             "shown in the big zoomed view. Drag the window to move it; drag its edges to "
             "expand it to the whole video or narrow it down to a tiny section.\n\n"
@@ -1180,10 +1284,10 @@ def main():
             app.url_var.set(target)
             root.after(200, app.load_url)
     if IS_MAC:
-        # Files dropped on the Dock icon / "Open With".
+        # Files dropped on the Dock icon or opened with "Open With".
         def open_doc(*paths):
-            if paths and not app.busy:
-                app._start_job(app._job_file, paths[0])
+            if paths:
+                app.handle_dropped(paths)
         try:
             root.createcommand("::tk::mac::OpenDocument", open_doc)
         except tk.TclError:

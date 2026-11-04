@@ -13,7 +13,14 @@ else needs to be installed. It runs on macOS 11 and later, including
 1. Copy a YouTube link in your browser (click the address bar, then ⌘C) and
    click **Paste & Load**. You can also paste into the **YouTube URL** box
    with ⌘V, right-click → Paste, or Edit → Paste, then press **Load** (or
-   Return). **Open File…** loads a local audio or video file instead.
+   Return).
+
+   **Files on your computer:** to use a video or audio file you already have,
+   **drag it from Finder and drop it anywhere on the Audio Ripper window**.
+   You can also drop it onto the app's Dock icon, right-click it in Finder
+   and choose **Open With → Audio Ripper**, or use **Open File…**. Most
+   formats work, including MP4, MOV, MKV, WebM, AVI, MP3, M4A, WAV, FLAC
+   and OGG.
 2. The **whole-video strip** at the top shows the entire soundtrack. The
    **yellow window** on it marks the part shown in the large zoomed view:
    * drag the window to move it,

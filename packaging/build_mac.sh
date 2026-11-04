@@ -74,6 +74,13 @@ codesign --verify --deep --strict "$APP" && echo "Signature OK"
 FF="$(find "$APP" -name 'ffmpeg-*' -type f | head -1)"
 "$FF" -version | head -1
 
+# Drag-and-drop library (tkdnd) must be inside the app.
+if ! find "$APP" -path '*tkdnd*' -name '*.dylib' | grep -q .; then
+  echo "ERROR: tkdnd (drag and drop) was not bundled." >&2
+  exit 1
+fi
+echo "Drag-and-drop support bundled"
+
 ZIP="dist/Audio-Ripper-macOS-$ARCH.zip"
 rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
